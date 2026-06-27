@@ -1,0 +1,26 @@
+# Homelab deployment overrides for tabs.marce1in.com.br.
+# Use with: docker compose -f docker-compose.yml -f compose.homelab.yml up -d --build
+services:
+  app:
+    build:
+      context: .
+    ports: !override
+      - "127.0.0.1:4001:4000"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.tabs.rule: "Host(`tabs.marce1in.com.br`)"
+      traefik.http.services.tabs.loadbalancer.server.port: "4000"
+      traefik.docker.network: "meira-infra"
+      com.centurylinklabs.watchtower.scope: "tabs"
+    networks:
+      - default
+      - meira-infra
+
+  watchtower:
+    container_name: tabs-watchtower
+    environment:
+      WATCHTOWER_SCOPE: "tabs"
+
+networks:
+  meira-infra:
+    external: true
