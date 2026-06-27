@@ -12,6 +12,7 @@ defmodule BacksBacksBacks.Application do
       BacksBacksBacks.Repo,
       {DNSCluster, query: Application.get_env(:backs_backs_backs, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: BacksBacksBacks.PubSub},
+      BacksBacksBacksWeb.Presence,
       # Start a worker by calling: BacksBacksBacks.Worker.start_link(arg)
       # {BacksBacksBacks.Worker, arg},
       # Start to serve requests, typically the last entry
