@@ -8,17 +8,9 @@ import Config
 config :backs_backs_backs, BacksBacksBacksWeb.Endpoint,
   cache_static_manifest: "priv/static/cache_manifest.json"
 
-# Force using SSL in production. This also sets the "strict-security-transport" header,
-# known as HSTS. If you have a health check endpoint, you may want to exclude it below.
-# Note `:force_ssl` is required to be set at compile-time.
-config :backs_backs_backs, BacksBacksBacksWeb.Endpoint,
-  force_ssl: [
-    rewrite_on: [:x_forwarded_proto],
-    exclude: [
-      # paths: ["/health"],
-      hosts: ["localhost", "127.0.0.1"]
-    ]
-  ]
+# TLS is terminated by an upstream reverse proxy before requests reach Phoenix,
+# so we deliberately do NOT force SSL or set HSTS here. The proxy handles HTTPS;
+# forcing SSL inside the app would cause redirect loops behind the proxy.
 
 # Configure Swoosh API Client
 config :swoosh, api_client: Swoosh.ApiClient.Req
