@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+cd -P -- "$(dirname -- "$0")"
+exec ./backs_backs_backs eval BacksBacksBacks.Release.migrate
