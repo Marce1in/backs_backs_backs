@@ -1,0 +1,52 @@
+# Production stack: the app (pulled from GHCR) + Watchtower for auto-deploy.
+#
+# Production host:
+#   1. docker login is NOT needed — the GHCR package is public.
+#   2. Create .env from .env.example (SECRET_KEY_BASE, PHX_HOST).
+#   3. docker compose up -d
+#   Watchtower then polls GHCR every 60s and recreates `app` when a new
+#   :latest image is pushed by CI. The sqlite_data volume persists across updates.
+#
+# Local testing (image not yet on GHCR): build & tag it first, then `up`:
+#   docker build -t ghcr.io/marce1in/backs_backs_backs:latest .
+#   docker compose up -d
+name: backs_backs_backs
+
+services:
+  app:
+    image: ghcr.io/marce1in/backs_backs_backs:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PHX_SERVER: "true"
+      DATABASE_PATH: /data/backs_backs_backs_prod.db
+      PORT: "4000"
+    ports:
+      - "4000:4000"
+    volumes:
+      - sqlite_data:/data
+    # Watchtower only watches containers carrying this label (see WATCHTOWER_LABEL_ENABLE).
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+
+  watchtower:
+    container_name: watchtower
+    # Actively-maintained Watchtower fork (drop-in replacement for containrrr/watchtower,
+    # same env vars + labels) that supports modern Docker engines natively.
+    image: nickfedor/watchtower:latest
+    restart: unless-stopped
+    # SELinux-enforcing hosts (Fedora/RHEL/CentOS/Rocky) deny containers access to the
+    # docker socket. This lifts SELinux confinement for watchtower only; it is a harmless
+    # no-op on non-SELinux hosts (e.g. Debian/Ubuntu).
+    security_opt:
+      - label:disable
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      WATCHTOWER_LABEL_ENABLE: "true"   # only update labeled containers (the app)
+      WATCHTOWER_CLEANUP: "true"        # remove old images after a successful update
+      WATCHTOWER_POLL_INTERVAL: "60"    # seconds between registry checks
+
+volumes:
+  sqlite_data:

@@ -38,3 +38,7 @@ backs_backs_backs-*.tar
 # In case you use Node.js/npm, you want to ignore these.
 npm-debug.log
 /assets/node_modules/
+
+# Environment file with secrets, loaded by docker-compose at runtime.
+# (.env.example is committed as a template.)
+.env
