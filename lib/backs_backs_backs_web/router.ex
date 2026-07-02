@@ -20,10 +20,17 @@ defmodule BacksBacksBacksWeb.Router do
     get "/", PageController, :home
   end
 
-  # Other scopes may use custom stacks.
-  # scope "/api", BacksBacksBacksWeb do
-  #   pipe_through :api
-  # end
+  scope "/", BacksBacksBacksWeb do
+    pipe_through :api
+
+    get "/auth/github/callback", AuthController, :github_callback
+  end
+
+  scope "/api", BacksBacksBacksWeb do
+    pipe_through :api
+
+    post "/auth/github/start", AuthController, :github_start
+  end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development
   if Application.compile_env(:backs_backs_backs, :dev_routes) do

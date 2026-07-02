@@ -23,6 +23,24 @@ end
 config :backs_backs_backs, BacksBacksBacksWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+config :backs_backs_backs, BacksBacksBacks.Auth,
+  github_client: BacksBacksBacks.Auth.GitHubClient,
+  github_client_id: System.get_env("GITHUB_CLIENT_ID", ""),
+  github_client_secret: System.get_env("GITHUB_CLIENT_SECRET", ""),
+  github_callback_url:
+    System.get_env("GITHUB_CALLBACK_URL", "http://localhost:4000/auth/github/callback"),
+  extension_redirect_uris:
+    System.get_env("EXTENSION_REDIRECT_URIS", "")
+    |> String.split(",", trim: true)
+    |> Enum.map(&String.trim/1)
+
+config :backs_backs_backs, BacksBacksBacks.TabOrganizer,
+  openrouter_client: BacksBacksBacks.TabOrganizer.OpenRouter,
+  openrouter_api_key: System.get_env("OPENROUTER_API_KEY", ""),
+  openrouter_model: System.get_env("OPENROUTER_MODEL", "openrouter/owl-alpha"),
+  scheduler_enabled: System.get_env("TAB_ORGANIZER_SCHEDULER_ENABLED", "true") == "true",
+  scheduler_interval_ms: String.to_integer(System.get_env("TAB_ORGANIZER_INTERVAL_MS", "300000"))
+
 if config_env() == :prod do
   database_path =
     System.get_env("DATABASE_PATH") ||

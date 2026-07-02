@@ -40,3 +40,17 @@ config :phoenix_live_view,
 # Sort query params output of verified routes for robust url comparisons
 config :phoenix,
   sort_verified_routes_query_params: true
+
+config :backs_backs_backs, BacksBacksBacks.Auth,
+  github_client: BacksBacksBacks.Auth.GitHubClient,
+  github_client_id: "test-client-id",
+  github_client_secret: "test-client-secret",
+  github_callback_url: "http://localhost:4002/auth/github/callback",
+  extension_redirect_uris: ["https://extension.test/github"]
+
+config :backs_backs_backs, BacksBacksBacks.TabOrganizer,
+  openrouter_client: BacksBacksBacks.TabOrganizer.OpenRouter,
+  openrouter_api_key: "test-openrouter-key",
+  openrouter_model: "openrouter/test-model",
+  scheduler_enabled: false,
+  scheduler_interval_ms: 300_000

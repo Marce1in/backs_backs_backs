@@ -4,6 +4,7 @@ defmodule BacksBacksBacks.TabSync.SyncClient do
   import Ecto.Changeset
 
   schema "sync_clients" do
+    field :user_id, :id
     field :client_id, :string
     field :label, :string
     field :last_seen_at, :utc_datetime_usec
@@ -13,10 +14,10 @@ defmodule BacksBacksBacks.TabSync.SyncClient do
 
   def changeset(sync_client, attrs) do
     sync_client
-    |> cast(attrs, [:client_id, :label, :last_seen_at])
-    |> validate_required([:client_id, :label, :last_seen_at])
+    |> cast(attrs, [:user_id, :client_id, :label, :last_seen_at])
+    |> validate_required([:user_id, :client_id, :label, :last_seen_at])
     |> validate_length(:client_id, max: 128)
     |> validate_length(:label, max: 128)
-    |> unique_constraint(:client_id)
+    |> unique_constraint(:client_id, name: :sync_clients_user_id_client_id_index)
   end
 end

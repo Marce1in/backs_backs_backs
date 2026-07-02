@@ -7,22 +7,43 @@ defmodule BacksBacksBacks.Application do
 
   @impl true
   def start(_type, _args) do
-    children = [
-      BacksBacksBacksWeb.Telemetry,
-      BacksBacksBacks.Repo,
-      {DNSCluster, query: Application.get_env(:backs_backs_backs, :dns_cluster_query) || :ignore},
-      {Phoenix.PubSub, name: BacksBacksBacks.PubSub},
-      BacksBacksBacksWeb.Presence,
-      # Start a worker by calling: BacksBacksBacks.Worker.start_link(arg)
-      # {BacksBacksBacks.Worker, arg},
-      # Start to serve requests, typically the last entry
-      BacksBacksBacksWeb.Endpoint
-    ]
+    children =
+      [
+        BacksBacksBacksWeb.Telemetry,
+        BacksBacksBacks.Repo,
+        {DNSCluster,
+         query: Application.get_env(:backs_backs_backs, :dns_cluster_query) || :ignore},
+        {Phoenix.PubSub, name: BacksBacksBacks.PubSub},
+        BacksBacksBacksWeb.Presence
+      ] ++
+        tab_organizer_children() ++
+        [
+          # Start a worker by calling: BacksBacksBacks.Worker.start_link(arg)
+          # {BacksBacksBacks.Worker, arg},
+          # Start to serve requests, typically the last entry
+          BacksBacksBacksWeb.Endpoint
+        ]
 
     # See https://elixir.hexdocs.pm/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: BacksBacksBacks.Supervisor]
     Supervisor.start_link(children, opts)
+  end
+
+  defp tab_organizer_children do
+    if tab_organizer_scheduler_enabled?() do
+      [
+        {Task.Supervisor, name: BacksBacksBacks.TabOrganizer.TaskSupervisor},
+        BacksBacksBacks.TabOrganizer.Scheduler
+      ]
+    else
+      []
+    end
+  end
+
+  defp tab_organizer_scheduler_enabled? do
+    Application.get_env(:backs_backs_backs, BacksBacksBacks.TabOrganizer, [])
+    |> Keyword.get(:scheduler_enabled, true)
   end
 
   # Tell Phoenix to update the endpoint configuration

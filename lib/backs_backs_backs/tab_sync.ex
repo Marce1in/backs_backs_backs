@@ -1,6 +1,6 @@
 defmodule BacksBacksBacks.TabSync do
   @moduledoc """
-  Persistence and normalization for the public tab-sync channel.
+  Persistence and normalization for authenticated tab-sync channels.
   """
 
   import Ecto.Query
@@ -13,11 +13,13 @@ defmodule BacksBacksBacks.TabSync do
   @default_group_title "Group"
   @default_tab_title "Untitled tab"
 
-  def upsert_client(client_id, label) when is_binary(client_id) do
+  def upsert_client(user_id, client_id, label)
+      when is_integer(user_id) and is_binary(client_id) do
     now = now()
     label = normalize_text(label, "Anonymous", 128)
 
     attrs = %{
+      user_id: user_id,
       client_id: normalize_text(client_id, client_id, 128),
       label: label,
       last_seen_at: now
@@ -33,40 +35,43 @@ defmodule BacksBacksBacks.TabSync do
           updated_at: now
         ]
       ],
-      conflict_target: :client_id
+      conflict_target: [:user_id, :client_id]
     )
   end
 
-  def state do
+  def state(user_id) when is_integer(user_id) do
     %{
       "tabs" =>
         SyncedTab
+        |> where([tab], tab.user_id == ^user_id)
         |> order_by([tab], asc: tab.position, asc: tab.title)
         |> Repo.all()
         |> Enum.map(&tab_payload/1),
       "groups" =>
         SyncedTabGroup
+        |> where([group], group.user_id == ^user_id)
         |> order_by([group], asc: group.position, asc: group.title)
         |> Repo.all()
         |> Enum.map(&group_payload/1)
     }
   end
 
-  def upsert(origin_client_id, payload) when is_binary(origin_client_id) and is_map(payload) do
+  def upsert(user_id, origin_client_id, payload)
+      when is_integer(user_id) and is_binary(origin_client_id) and is_map(payload) do
     groups = payload_list(payload, "groups", :groups)
     tabs = payload_list(payload, "tabs", :tabs)
 
     Repo.transaction(fn ->
       normalized_groups =
         groups
-        |> Enum.map(&normalize_group(&1, origin_client_id))
+        |> Enum.map(&normalize_group(&1, user_id, origin_client_id))
         |> Enum.reject(&is_nil/1)
 
       Enum.each(normalized_groups, &upsert_group/1)
 
       normalized_tabs =
         tabs
-        |> Enum.map(&normalize_tab(&1, origin_client_id))
+        |> Enum.map(&normalize_tab(&1, user_id, origin_client_id))
         |> Enum.reject(&is_nil/1)
 
       Enum.each(normalized_tabs, &upsert_tab/1)
@@ -78,9 +83,10 @@ defmodule BacksBacksBacks.TabSync do
     end)
   end
 
-  def upsert(_origin_client_id, _payload), do: {:error, :invalid_payload}
+  def upsert(_user_id, _origin_client_id, _payload), do: {:error, :invalid_payload}
 
-  def delete(origin_client_id, payload) when is_binary(origin_client_id) and is_map(payload) do
+  def delete(user_id, origin_client_id, payload)
+      when is_integer(user_id) and is_binary(origin_client_id) and is_map(payload) do
     tab_keys =
       (payload_list(payload, "tabKeys", :tabKeys) ++ payload_list(payload, "tab_keys", :tab_keys))
       |> normalize_key_list()
@@ -91,7 +97,7 @@ defmodule BacksBacksBacks.TabSync do
       |> normalize_key_list()
 
     {deleted_count, _} =
-      delete_query(tab_keys, fingerprints)
+      delete_query(user_id, tab_keys, fingerprints)
       |> Repo.delete_all()
 
     {:ok,
@@ -103,7 +109,35 @@ defmodule BacksBacksBacks.TabSync do
      }}
   end
 
-  def delete(_origin_client_id, _payload), do: {:error, :invalid_payload}
+  def delete(_user_id, _origin_client_id, _payload), do: {:error, :invalid_payload}
+
+  def apply_organization(user_id, groups)
+      when is_integer(user_id) and is_list(groups) do
+    Repo.transaction(fn ->
+      SyncedTabGroup
+      |> where([group], group.user_id == ^user_id)
+      |> Repo.delete_all()
+
+      SyncedTab
+      |> where([tab], tab.user_id == ^user_id)
+      |> Repo.update_all(set: [group_key: nil, updated_at: now()])
+
+      groups
+      |> Enum.map(&normalize_organization_group(&1, user_id))
+      |> Enum.reject(&is_nil/1)
+      |> Enum.each(fn %{group: group, tab_keys: tab_keys} ->
+        upsert_group(group)
+
+        SyncedTab
+        |> where([tab], tab.user_id == ^user_id and tab.tab_key in ^tab_keys)
+        |> Repo.update_all(set: [group_key: group.group_key, updated_at: now()])
+      end)
+
+      state(user_id)
+    end)
+  end
+
+  def apply_organization(_user_id, _groups), do: {:error, :invalid_payload}
 
   def normalize_url(raw_url) when is_binary(raw_url) do
     raw_url
@@ -135,7 +169,7 @@ defmodule BacksBacksBacks.TabSync do
 
   defp normalize_uri(_uri), do: :error
 
-  defp normalize_group(payload, origin_client_id) when is_map(payload) do
+  defp normalize_group(payload, user_id, origin_client_id) when is_map(payload) do
     title = payload_value(payload, "title", :title) || payload_value(payload, "name", :name)
     title = normalize_text(title, @default_group_title, 32)
     color = normalize_color(payload_value(payload, "color", :color))
@@ -147,6 +181,7 @@ defmodule BacksBacksBacks.TabSync do
         generated_group_key(title, color)
 
     %SyncedTabGroup{
+      user_id: user_id,
       group_key: normalize_text(group_key, generated_group_key(title, color), 96),
       title: title,
       color: color,
@@ -155,9 +190,9 @@ defmodule BacksBacksBacks.TabSync do
     }
   end
 
-  defp normalize_group(_payload, _origin_client_id), do: nil
+  defp normalize_group(_payload, _user_id, _origin_client_id), do: nil
 
-  defp normalize_tab(payload, origin_client_id) when is_map(payload) do
+  defp normalize_tab(payload, user_id, origin_client_id) when is_map(payload) do
     with raw_url when is_binary(raw_url) <- payload_value(payload, "url", :url),
          {:ok, url} <- normalize_url(raw_url) do
       title = normalize_text(payload_value(payload, "title", :title), @default_tab_title, 512)
@@ -169,6 +204,7 @@ defmodule BacksBacksBacks.TabSync do
       fingerprint = fingerprint_for_url(url)
 
       %SyncedTab{
+        user_id: user_id,
         tab_key: normalize_text(read_tab_key(payload), fingerprint, 128),
         fingerprint: fingerprint,
         url: url,
@@ -182,11 +218,46 @@ defmodule BacksBacksBacks.TabSync do
     end
   end
 
-  defp normalize_tab(_payload, _origin_client_id), do: nil
+  defp normalize_tab(_payload, _user_id, _origin_client_id), do: nil
+
+  defp normalize_organization_group(payload, user_id) when is_map(payload) do
+    tab_keys =
+      payload
+      |> payload_list("tabKeys", :tab_keys)
+      |> normalize_key_list()
+
+    if tab_keys == [] do
+      nil
+    else
+      title = normalize_text(payload_value(payload, "title", :title), @default_group_title, 32)
+      color = normalize_color(payload_value(payload, "color", :color))
+      position = normalize_position(payload_value(payload, "position", :position))
+
+      group_key =
+        payload_value(payload, "groupKey", :group_key) ||
+          generated_group_key("#{title}:#{Enum.join(tab_keys, ",")}", color)
+
+      %{
+        group: %SyncedTabGroup{
+          user_id: user_id,
+          group_key: normalize_text(group_key, generated_group_key(title, color), 96),
+          title: title,
+          color: color,
+          position: position,
+          last_seen_client_id: "server"
+        },
+        tab_keys: tab_keys
+      }
+    end
+  end
+
+  defp normalize_organization_group(_payload, _user_id), do: nil
 
   defp upsert_group(%SyncedTabGroup{} = group) do
     now = now()
-    attrs = Map.take(group, [:group_key, :title, :color, :position, :last_seen_client_id])
+
+    attrs =
+      Map.take(group, [:user_id, :group_key, :title, :color, :position, :last_seen_client_id])
 
     %SyncedTabGroup{}
     |> SyncedTabGroup.changeset(attrs)
@@ -200,7 +271,7 @@ defmodule BacksBacksBacks.TabSync do
           updated_at: now
         ]
       ],
-      conflict_target: :group_key
+      conflict_target: [:user_id, :group_key]
     )
   end
 
@@ -209,6 +280,7 @@ defmodule BacksBacksBacks.TabSync do
 
     attrs =
       Map.take(tab, [
+        :user_id,
         :tab_key,
         :fingerprint,
         :url,
@@ -231,7 +303,7 @@ defmodule BacksBacksBacks.TabSync do
           updated_at: now
         ]
       ],
-      conflict_target: :tab_key
+      conflict_target: [:user_id, :tab_key]
     )
   end
 
@@ -278,12 +350,12 @@ defmodule BacksBacksBacks.TabSync do
     |> Enum.uniq()
   end
 
-  defp delete_query(tab_keys, _fingerprints) when tab_keys != [] do
-    from(tab in SyncedTab, where: tab.tab_key in ^tab_keys)
+  defp delete_query(user_id, tab_keys, _fingerprints) when tab_keys != [] do
+    from(tab in SyncedTab, where: tab.user_id == ^user_id and tab.tab_key in ^tab_keys)
   end
 
-  defp delete_query(_tab_keys, fingerprints) do
-    from(tab in SyncedTab, where: tab.fingerprint in ^fingerprints)
+  defp delete_query(user_id, _tab_keys, fingerprints) do
+    from(tab in SyncedTab, where: tab.user_id == ^user_id and tab.fingerprint in ^fingerprints)
   end
 
   defp normalize_color(color) when color in @colors, do: color
