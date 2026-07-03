@@ -58,7 +58,7 @@ defmodule BacksBacksBacksWeb.TabsChannel do
         {:reply, {:ok, Map.put(changes, "state", TabSync.state(user_id))}, socket}
 
       {:error, reason} ->
-        {:reply, {:error, %{"reason" => to_string(reason)}}, socket}
+        {:reply, {:error, %{"reason" => error_reason(reason)}}, socket}
     end
   end
 
@@ -72,7 +72,7 @@ defmodule BacksBacksBacksWeb.TabsChannel do
         {:reply, {:ok, changes}, socket}
 
       {:error, reason} ->
-        {:reply, {:error, %{"reason" => to_string(reason)}}, socket}
+        {:reply, {:error, %{"reason" => error_reason(reason)}}, socket}
     end
   end
 
@@ -82,10 +82,15 @@ defmodule BacksBacksBacksWeb.TabsChannel do
         {:reply, {:ok, result}, socket}
 
       {:skip, reason} ->
-        {:reply, {:error, %{"reason" => to_string(reason)}}, socket}
+        {:reply, {:error, %{"reason" => error_reason(reason)}}, socket}
 
       {:error, reason} ->
-        {:reply, {:error, %{"reason" => to_string(reason)}}, socket}
+        {:reply, {:error, %{"reason" => error_reason(reason)}}, socket}
     end
   end
+
+  defp error_reason(reason) when is_binary(reason), do: reason
+  defp error_reason(reason) when is_atom(reason), do: to_string(reason)
+  defp error_reason(reason) when is_exception(reason), do: Exception.message(reason)
+  defp error_reason(reason), do: inspect(reason)
 end

@@ -6,6 +6,11 @@ defmodule BacksBacksBacks.TabOrganizer.OpenRouter do
   @chat_completions_url "https://openrouter.ai/api/v1/chat/completions"
   @title "Tabs Tabs Tabs"
   @colors ~w(grey blue red yellow green pink purple cyan orange)
+  # OpenRouter pode levar bem mais que o receive_timeout padrão do Req (15s)
+  # para responder um agrupamento com structured output. Fica abaixo dos 60s
+  # de timeout do push no cliente, para que o erro chegue como reply e não
+  # como timeout silencioso na extensão.
+  @receive_timeout_ms 55_000
 
   def request_plan(tabs) when is_list(tabs) do
     with {:ok, api_key} <- api_key() do
@@ -17,7 +22,8 @@ defmodule BacksBacksBacks.TabOrganizer.OpenRouter do
                {"content-type", "application/json"},
                {"x-openrouter-title", @title}
              ],
-             json: body
+             json: body,
+             receive_timeout: @receive_timeout_ms
            ) do
         {:ok, %{status: status, body: payload}} when status in 200..299 ->
           parse_payload(payload)
