@@ -25,13 +25,25 @@ defmodule BacksBacksBacks.TabOrganizerTest do
     {:ok, user: insert_user()}
   end
 
-  test "OpenRouter request body asks for tabKey-based groups" do
-    body = OpenRouter.request_body("openrouter/test-model", [%{tabKey: "tab-1", title: "Docs"}])
+  test "OpenRouter request body asks for tabKey-based groups and sends existing groups" do
+    body =
+      OpenRouter.request_body(
+        "openrouter/test-model",
+        [%{tabKey: "tab-1", title: "Docs", currentGroupId: "group-1"}],
+        [%{id: "group-1", name: "Research", color: "blue"}]
+      )
 
     assert body.model == "openrouter/test-model"
     assert [%{role: "system"}, %{role: "user", content: user_content}] = body.messages
-    assert %{"tabs" => [%{"tabKey" => "tab-1"}]} = Jason.decode!(user_content)
-    assert body.response_format.json_schema.schema.properties.groups.items.properties.tabKeys
+
+    assert %{
+             "tabs" => [%{"tabKey" => "tab-1", "currentGroupId" => "group-1"}],
+             "existingGroups" => [%{"id" => "group-1", "name" => "Research"}]
+           } = Jason.decode!(user_content)
+
+    group_properties = body.response_format.json_schema.schema.properties.groups.items.properties
+    assert group_properties.tabKeys
+    assert group_properties.existingGroupId
   end
 
   test "organizes tabs with backend OpenRouter client and stores signature", %{user: user} do
@@ -101,11 +113,49 @@ defmodule BacksBacksBacks.TabOrganizerTest do
     assert plan.warnings == ["Grupo 1 ignorado porque não tinha abas válidas."]
   end
 
+  test "keeps the original groupKey when the AI reuses an existing group" do
+    tabs = [
+      %{"tabKey" => "tab-1", "title" => "One", "url" => "https://one.example", "position" => 0},
+      %{"tabKey" => "tab-2", "title" => "Two", "url" => "https://two.example", "position" => 1}
+    ]
+
+    existing_groups = [%{"groupKey" => "ai:abc123", "title" => "Research", "color" => "blue"}]
+
+    assert {:ok, plan} =
+             TabOrganizer.normalize_plan(
+               %{
+                 "groups" => [
+                   %{
+                     "existingGroupId" => "ai:abc123",
+                     "name" => "Research",
+                     "color" => "blue",
+                     "tabKeys" => ["tab-1"]
+                   },
+                   %{
+                     "existingGroupId" => "ai:unknown",
+                     "name" => "News",
+                     "color" => "red",
+                     "tabKeys" => ["tab-2"]
+                   }
+                 ],
+                 "ungroupedTabKeys" => []
+               },
+               tabs,
+               existing_groups
+             )
+
+    assert [%{"groupKey" => "ai:abc123"}, %{"groupKey" => "ai:" <> generated}] = plan.groups
+    refute generated == "unknown"
+  end
+
   defmodule FakeOpenRouterClient do
-    def request_plan([
-          %{tabKey: "tab-1", domain: "example.com", url: "https://example.com/docs"},
-          %{tabKey: "tab-2", domain: "news.example", url: "https://news.example/top"}
-        ]) do
+    def request_plan(
+          [
+            %{tabKey: "tab-1", domain: "example.com", url: "https://example.com/docs"},
+            %{tabKey: "tab-2", domain: "news.example", url: "https://news.example/top"}
+          ],
+          _existing_groups
+        ) do
       {:ok,
        %{
          "groups" => [

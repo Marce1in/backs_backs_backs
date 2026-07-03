@@ -159,7 +159,7 @@ defmodule BacksBacksBacksWeb.TabsChannelTest do
   end
 
   defmodule FakeOpenRouterClient do
-    def request_plan(_tabs) do
+    def request_plan(_tabs, _existing_groups) do
       {:ok,
        %{
          "groups" => [

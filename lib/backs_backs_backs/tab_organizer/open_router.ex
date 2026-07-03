@@ -12,9 +12,9 @@ defmodule BacksBacksBacks.TabOrganizer.OpenRouter do
   # como timeout silencioso na extensão.
   @receive_timeout_ms 55_000
 
-  def request_plan(tabs) when is_list(tabs) do
+  def request_plan(tabs, existing_groups) when is_list(tabs) and is_list(existing_groups) do
     with {:ok, api_key} <- api_key() do
-      body = request_body(model(), tabs)
+      body = request_body(model(), tabs, existing_groups)
 
       case Req.post(@chat_completions_url,
              headers: [
@@ -37,7 +37,7 @@ defmodule BacksBacksBacks.TabOrganizer.OpenRouter do
     end
   end
 
-  def request_body(model, tabs) do
+  def request_body(model, tabs, existing_groups \\ []) do
     %{
       model: model,
       stream: false,
@@ -59,16 +59,21 @@ defmodule BacksBacksBacks.TabOrganizer.OpenRouter do
           role: "system",
           content:
             [
-              "Você organiza abas do navegador em grupos úteis do Chrome.",
-              "Retorne apenas JSON que corresponda ao schema fornecido.",
-              "Cada tabKey deve aparecer exatamente uma vez, dentro de um grupo ou em ungroupedTabKeys.",
-              "Não invente tabKeys. Use nomes de grupos com no máximo 2 palavras. Evite grupos com uma única aba, exceto quando a aba for claramente distinta."
+              "You organize browser tabs into Chrome tab groups.",
+              "Return only JSON that matches the provided schema.",
+              "Every tabKey from the input must appear exactly once: either inside one group's tabKeys or in ungroupedTabKeys. Never invent tabKeys.",
+              "The input includes the user's current groups (existingGroups) and each tab's currentGroupId.",
+              "Strongly prefer the existing organization: keep tabs in their current groups and assign new or ungrouped tabs into a fitting existing group.",
+              "To reuse an existing group, set existingGroupId to its id and keep its name and color unchanged.",
+              "Only create a new group (existingGroupId = null), rename, merge or split groups when the current organization is clearly wrong or a significantly better one exists. Small improvements are not worth reshuffling the user's groups.",
+              "Group names: at most 2 words, under 32 characters, in the dominant language of the tabs.",
+              "Avoid single-tab groups unless the tab is clearly distinct from everything else."
             ]
             |> Enum.join(" ")
         },
         %{
           role: "user",
-          content: Jason.encode!(%{tabs: tabs})
+          content: Jason.encode!(%{tabs: tabs, existingGroups: existing_groups})
         }
       ]
     }
@@ -86,33 +91,37 @@ defmodule BacksBacksBacks.TabOrganizer.OpenRouter do
             type: "object",
             additionalProperties: false,
             properties: %{
+              existingGroupId: %{
+                type: ["string", "null"],
+                description:
+                  "Id of the existing group being reused (from existingGroups), or null when creating a new group. Prefer reusing existing groups."
+              },
               name: %{
                 type: "string",
-                description:
-                  "Nome curto do grupo de abas. Use no máximo 2 palavras e abaixo de 32 caracteres."
+                description: "Short tab group name: at most 2 words and under 32 characters."
               },
               color: %{
                 type: "string",
                 enum: @colors,
-                description: "Cor do grupo de abas do Chrome."
+                description: "Chrome tab group color."
               },
               tabKeys: %{
                 type: "array",
                 minItems: 1,
                 items: %{
                   type: "string",
-                  description: "Uma tabKey da lista de abas fornecida."
+                  description: "A tabKey from the provided tab list."
                 }
               }
             },
-            required: ["name", "color", "tabKeys"]
+            required: ["existingGroupId", "name", "color", "tabKeys"]
           }
         },
         ungroupedTabKeys: %{
           type: "array",
           items: %{
             type: "string",
-            description: "tabKeys que devem permanecer fora de grupos."
+            description: "tabKeys that should stay outside of any group."
           }
         }
       },

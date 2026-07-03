@@ -27,12 +27,17 @@ defmodule BacksBacksBacks.TabOrganizer do
     broadcast? = Keyword.get(opts, :broadcast, true)
     state = TabSync.state(user.id)
     tabs = read_tabs(state)
+    existing_groups = read_groups(state)
 
     with :ok <- ensure_enough_tabs(tabs),
          signature <- input_signature(tabs),
          :ok <- ensure_changed(user, signature, force?),
-         {:ok, plan} <- openrouter_client().request_plan(Enum.map(tabs, &ai_tab_payload/1)),
-         {:ok, normalized_plan} <- normalize_plan(plan, tabs),
+         {:ok, plan} <-
+           openrouter_client().request_plan(
+             Enum.map(tabs, &ai_tab_payload/1),
+             Enum.map(existing_groups, &ai_group_payload/1)
+           ),
+         {:ok, normalized_plan} <- normalize_plan(plan, tabs, existing_groups),
          {:ok, next_state} <- TabSync.apply_organization(user.id, normalized_plan.groups),
          {:ok, _user} <- Accounts.update_tab_organization_signature(user, signature) do
       if broadcast?, do: broadcast_state(user, next_state)
@@ -47,16 +52,17 @@ defmodule BacksBacksBacks.TabOrganizer do
     end
   end
 
-  def normalize_plan(input, tabs) when is_list(tabs) do
+  def normalize_plan(input, tabs, existing_groups \\ []) when is_list(tabs) do
     with raw_groups when is_list(raw_groups) <- payload_value(input, "groups", :groups) do
       valid_tab_keys = MapSet.new(Enum.map(tabs, & &1["tabKey"]))
+      existing_group_keys = MapSet.new(Enum.map(existing_groups, & &1["groupKey"]))
 
       {groups, grouped_tab_keys, warnings} =
         raw_groups
         |> Enum.take(12)
         |> Enum.with_index()
         |> Enum.reduce({[], MapSet.new(), []}, fn {group, index}, acc ->
-          normalize_group(group, index, valid_tab_keys, acc)
+          normalize_group(group, index, valid_tab_keys, existing_group_keys, acc)
         end)
 
       ungrouped_tab_keys =
@@ -110,12 +116,24 @@ defmodule BacksBacksBacks.TabOrganizer do
       position: tab["position"],
       title: normalize_text(tab["title"], "Untitled tab", 512),
       domain: domain_label(tab["url"]),
-      url: sanitize_url_for_ai(tab["url"])
+      url: sanitize_url_for_ai(tab["url"]),
+      currentGroupId: tab["groupKey"]
+    }
+  end
+
+  def ai_group_payload(group) do
+    %{
+      id: group["groupKey"],
+      name: group["title"],
+      color: group["color"]
     }
   end
 
   defp read_tabs(%{"tabs" => tabs}) when is_list(tabs), do: tabs
   defp read_tabs(_state), do: []
+
+  defp read_groups(%{"groups" => groups}) when is_list(groups), do: groups
+  defp read_groups(_state), do: []
 
   defp ensure_enough_tabs(tabs) when length(tabs) >= 2, do: :ok
   defp ensure_enough_tabs(_tabs), do: {:skip, :not_enough_tabs}
@@ -127,7 +145,7 @@ defmodule BacksBacksBacks.TabOrganizer do
 
   defp ensure_changed(_user, _signature, _force?), do: :ok
 
-  defp normalize_group(group, index, valid_tab_keys, {groups, grouped_tab_keys, warnings})
+  defp normalize_group(group, index, valid_tab_keys, existing_group_keys, {groups, grouped_tab_keys, warnings})
        when is_map(group) do
     tab_keys =
       group
@@ -140,7 +158,10 @@ defmodule BacksBacksBacks.TabOrganizer do
     else
       title = normalize_text(payload_value(group, "name", :name), @default_group_title, 32)
       color = normalize_color(payload_value(group, "color", :color))
-      group_key = generated_group_key(title, color, tab_keys)
+
+      group_key =
+        reused_group_key(group, existing_group_keys, groups) ||
+          generated_group_key(title, color, tab_keys)
 
       normalized_group = %{
         "groupKey" => group_key,
@@ -156,8 +177,23 @@ defmodule BacksBacksBacks.TabOrganizer do
     end
   end
 
-  defp normalize_group(_group, index, _valid_tab_keys, {groups, grouped_tab_keys, warnings}) do
+  defp normalize_group(_group, index, _valid_tab_keys, _existing_group_keys, {groups, grouped_tab_keys, warnings}) do
     {groups, grouped_tab_keys, ["Grupo malformado ignorado no índice #{index}." | warnings]}
+  end
+
+  # Keeps the original groupKey when the model reuses an existing group, so
+  # clients update the group in place instead of recreating it. Ignores ids
+  # that don't exist or were already claimed by another group in this plan.
+  defp reused_group_key(group, existing_group_keys, groups) do
+    case payload_value(group, "existingGroupId", :existingGroupId) do
+      id when is_binary(id) ->
+        if MapSet.member?(existing_group_keys, id) and
+             not Enum.any?(groups, &(&1["groupKey"] == id)),
+           do: id
+
+      _ ->
+        nil
+    end
   end
 
   defp normalize_tab_keys(tab_keys, valid_tab_keys, grouped_tab_keys) do
